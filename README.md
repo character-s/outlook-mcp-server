@@ -274,8 +274,22 @@ Try these with your AI assistant:
 ### Email Actions
 - `view_email_cache_tool(page=1)` - Browse loaded emails (5 per page)
 - `get_email_by_number_tool(email_number)` - Get full email details
-- `reply_to_email_by_number_tool(email_number, "reply text")` - Reply to email
-- `compose_email_tool("recipient@email.com", "subject", "body")` - Send new email
+- `reply_to_email_by_number_tool(email_number, "reply text")` - Draft a reply
+- `compose_email_tool("recipient@email.com", "subject", "body")` - Draft a new email
+
+Both accept an `attachments` argument - a local file path, or a list of paths:
+
+```python
+reply_to_email_by_number_tool(1, "See the corrected sheet attached.",
+                              attachments=r"C:\Users\me\Documents\report.xlsx")
+compose_email_tool("team@example.com", "Monthly report", "Attached.",
+                   attachments=[r"C:\a.pdf", r"C:\b.xlsx"])
+```
+
+Paths must exist on the machine running the server (`~` and environment variables
+are expanded). Limits are 20 files and 25 MB in total, configurable via
+`AttachmentConfig` in `backend/config.py`. If any file cannot be attached, no
+draft is saved at all - you never get a draft that is silently missing a file.
 
 ### Folder Operations
 - `get_folder_list_tool()` - **Always use first** to see available folders
@@ -286,7 +300,8 @@ Try these with your AI assistant:
 ### Safety Notes
 - **Always check folder list first** before moving/deleting
 - **Emails are cached** - use numbers from cache for operations
-- **Never sends without confirmation** - AI always asks before sending
+- **Nothing is ever sent** - composed messages, replies and batch forwards are
+  saved to Drafts; you review and press Send yourself in Outlook
 
 ## ⚡ Performance
 

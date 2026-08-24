@@ -6,10 +6,14 @@ from ..backend.validation import ValidationError
 
 
 def batch_forward_email_tool(email_number: int, csv_path: str, custom_text: str = "") -> Dict[str, Any]:
-    """Forward an email to recipients listed in a CSV file in batches of 500 (Outlook BCC limit).
+    """Draft a mass forward to recipients listed in a CSV file, in batches of 500 (Outlook BCC limit).
 
-    This function uses an email from your cache as a template and forwards it to multiple recipients
-    from a CSV file. The email is sent via BCC to protect recipient privacy.
+    This function uses an email from your cache as a template and builds one draft per batch of
+    recipients from a CSV file. Recipients go in BCC to protect their privacy.
+
+    This does NOT send anything. Each batch is saved to the Drafts folder for the user to review
+    and send themselves in Outlook. Given the blast radius of a mass forward, always show the
+    user the recipient count and the source CSV path before calling this.
 
     Args:
         email_number: The number of the email in the cache to use as template (1-based)
@@ -27,16 +31,16 @@ def batch_forward_email_tool(email_number: int, csv_path: str, custom_text: str 
         ```
 
     Returns:
-        dict: Response containing batch sending results
+        dict: Response containing batch drafting results
         {
             "type": "text",
-            "text": "Batch sending completed for X recipients in Y batches: [detailed results]"
+            "text": "Created Y draft(s) covering X recipients. Nothing has been sent: [details]"
         }
 
     Note:
         - Maximum 500 recipients per batch due to Outlook BCC limitations
         - Invalid email addresses in the CSV will be skipped with warnings
-        - The email is sent as BCC to protect recipient privacy
+        - Recipients are placed in BCC to protect their privacy
         - Recipients will see it as a forwarded email with "FW:" prefix
         - This function forwards existing emails, it does not compose new ones
     """

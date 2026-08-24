@@ -162,16 +162,20 @@ def batch_forward_emails(email_number: int, csv_path: str, custom_text: str = ""
                         logger.error(f"Error processing batch body: {e}")
                         mail.Body = "[Content processing error - please view original email]"
 
-                    mail.Send()
-                    logger.info(f"Batch {i} sent to {len(batch)} recipients")
-                    results.append(f"Batch {i} sent to {len(batch)} recipients")
+                    # Save as a draft instead of sending. A mass forward is the
+                    # single most damaging thing this server could do by mistake,
+                    # so it stops in Drafts like every other composed message.
+                    mail.Save()
+                    logger.info(f"Batch {i} saved as draft for {len(batch)} recipients")
+                    results.append(f"Batch {i} saved as draft for {len(batch)} recipients")
                 except Exception as e:
-                    logger.error(f"Error sending batch {i}: {e}")
-                    results.append(f"Error sending batch {i}: {str(e)}")
+                    logger.error(f"Error drafting batch {i}: {e}")
+                    results.append(f"Error drafting batch {i}: {str(e)}")
 
         return "\n".join(
             [
-                f"Batch sending completed for {total_recipients} recipients in {len(batches)} batches:",
+                f"Created {len(batches)} draft(s) covering {total_recipients} recipients. "
+                "Nothing has been sent - review each draft in Outlook and send it yourself:",
                 *results,
             ]
         )

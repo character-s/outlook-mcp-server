@@ -131,6 +131,9 @@ class OutlookConfig:
     OL_FOLDER_DRAFTS = 16
     OL_FOLDER_DELETED = 3
 
+    # OlInspectorClose: discard an unsaved item instead of keeping it around.
+    OL_DISCARD = 1
+
 
 class EmailFormatConfig:
     """Email format configuration.
@@ -149,15 +152,22 @@ class EmailFormatConfig:
 
 class AttachmentConfig:
     """Attachment configuration.
-    
+
     These constants represent different attachment types in Outlook,
     including inline/embedded attachments and file references.
+
+    The limits apply to files attached to outgoing drafts. MAX_TOTAL_ATTACHMENT_BYTES
+    is set to 25 MB, the common Exchange/Microsoft 365 message size cap - raise it
+    only if your mail server actually accepts larger messages.
     """
 
     BY_VALUE = 1
     BY_REFERENCE = 4
     EMBEDDING = 5
     OLE = 6
+
+    MAX_ATTACHMENT_COUNT = 20
+    MAX_TOTAL_ATTACHMENT_BYTES = 25 * 1024 * 1024
 
 
 class EmailMetadataConfig:

@@ -34,6 +34,7 @@ class OutlookConstants:
     OL_NOTE_ITEM = outlook_config.OL_NOTE_ITEM
     OL_POST_ITEM = outlook_config.OL_POST_ITEM
     OL_TASK_ITEM = outlook_config.OL_TASK_ITEM
+    OL_DISCARD = outlook_config.OL_DISCARD
 
 
 class BodyFormat:

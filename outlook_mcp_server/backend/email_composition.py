@@ -4,6 +4,7 @@
 from typing import Any, Callable, Dict, List, Optional, Union
 
 # Local application imports
+from .attachments import attach_files, describe_attachments, resolve_attachments
 from .logging_config import get_logger
 from .outlook_session.session_manager import OutlookSessionManager
 from .shared import email_cache, email_cache_order
@@ -25,6 +26,7 @@ def reply_to_email_by_number(
     reply_text: str,
     to_recipients: Optional[Union[str, List[str]]] = None,
     cc_recipients: Optional[Union[str, List[str]]] = None,
+    attachments: Optional[Union[str, List[str]]] = None,
 ) -> str:
     """
     Reply to an email with custom recipients if provided.
@@ -34,10 +36,15 @@ def reply_to_email_by_number(
         reply_text: Text to prepend to the reply
         to_recipients: Either a single email string OR a list of email strings (None preserves original recipients)
         cc_recipients: Either a single email string OR a list of email strings (None preserves original recipients)
+        attachments: Local file path, or list of file paths, to attach to the draft
 
     Returns:
         str: Success or error message
     """
+    # Resolve attachments before touching Outlook so a bad path fails without
+    # leaving a half-built draft behind.
+    resolved_attachments = resolve_attachments(attachments)
+
     # Validate inputs using Pydantic
     try:
         params = EmailReplyParams(
@@ -276,9 +283,30 @@ def reply_to_email_by_number(
                     f"{reply_text_safe}\n\n{'_' * DisplayConstants.SEPARATOR_LINE_LENGTH}\n[Original email content unavailable]"
                 )
 
-            new_mail.Send()
-            logger.info(f"Successfully replied to email #{email_number}")
-            return f"Successfully replied to email #{email_number}"
+            if resolved_attachments:
+                try:
+                    attach_files(new_mail, resolved_attachments)
+                except Exception:
+                    # Discard rather than save a draft that is missing files the
+                    # user asked for and might not notice are absent.
+                    try:
+                        new_mail.Close(OutlookConstants.OL_DISCARD)
+                    except Exception as close_error:
+                        logger.warning(f"Failed to discard incomplete draft: {close_error}")
+                    raise
+
+            # Save as a draft instead of sending. Nothing leaves the mailbox
+            # without the user opening Drafts in Outlook and clicking Send.
+            new_mail.Save()
+            logger.info(
+                f"Saved draft reply for email #{email_number} "
+                f"with {len(resolved_attachments)} attachment(s)"
+            )
+            return (
+                f"Draft reply to email #{email_number} saved to the Drafts folder."
+                f"{describe_attachments(resolved_attachments)} "
+                "This server never sends mail; review and send it yourself in Outlook."
+            )
 
         except Exception as e:
             logger.error(f"Error replying to email #{email_number}: {e}")
@@ -291,9 +319,10 @@ def compose_email(
     body: str,
     cc_recipients: Optional[List[str]] = None,
     html: bool = False,
+    attachments: Optional[Union[str, List[str]]] = None,
 ) -> str:
     """
-    Compose and send a new email using Outlook COM API.
+    Compose a new email using Outlook COM API and save it as a draft.
 
     Args:
         to_recipients: List of recipient email addresses
@@ -301,10 +330,15 @@ def compose_email(
         body: Email body content
         cc_recipients: Optional list of CC email addresses
         html: If True, body is treated as HTML (default: False)
+        attachments: Local file path, or list of file paths, to attach to the draft
 
     Returns:
         str: Success/error message
     """
+    # Resolve attachments before touching Outlook so a bad path fails without
+    # leaving a half-built draft behind.
+    resolved_attachments = resolve_attachments(attachments)
+
     # Validate inputs using Pydantic
     try:
         params = EmailComposeParams(
@@ -363,9 +397,29 @@ def compose_email(
                 logger.warning(f"Failed to set email body format, using plain text: {e}")
                 mail.Body = body_safe
 
-            mail.Send()
-            logger.info(f"Email sent successfully to {len(to_recipients)} recipients")
-            return "Email sent successfully"
+            if resolved_attachments:
+                try:
+                    attach_files(mail, resolved_attachments)
+                except Exception:
+                    # Discard rather than save a draft that is missing files the
+                    # user asked for and might not notice are absent.
+                    try:
+                        mail.Close(OutlookConstants.OL_DISCARD)
+                    except Exception as close_error:
+                        logger.warning(f"Failed to discard incomplete draft: {close_error}")
+                    raise
+
+            # Save as a draft instead of sending. See reply_to_email_by_number.
+            mail.Save()
+            logger.info(
+                f"Saved draft email for {len(to_recipients)} recipients "
+                f"with {len(resolved_attachments)} attachment(s)"
+            )
+            return (
+                f"Draft email to {len(to_recipients)} recipient(s) saved to the Drafts folder."
+                f"{describe_attachments(resolved_attachments)} "
+                "This server never sends mail; review and send it yourself in Outlook."
+            )
 
         except Exception as e:
             logger.error(f"Error composing email: {e}")
