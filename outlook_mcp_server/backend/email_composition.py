@@ -5,6 +5,7 @@ from typing import Any, Callable, Dict, List, Optional, Union
 
 # Local application imports
 from .attachments import attach_files, describe_attachments, resolve_attachments
+from .config import email_defaults_config
 from .logging_config import get_logger
 from .outlook_session.session_manager import OutlookSessionManager
 from .shared import email_cache, email_cache_order
@@ -19,6 +20,83 @@ from .validation import (
 from .validators import EmailComposeParams, EmailReplyParams
 
 logger = get_logger(__name__)
+
+
+def _read_cached_recipient(recipient_info: Dict[str, Any]) -> tuple:
+    """Pull the address and display name out of a cached recipient entry.
+
+    The extractors emit {"address", "name"}. Older cache files (and any caller
+    building entries by hand) use {"email", "display_name"}, so both shapes are
+    accepted - reading only the latter silently dropped every CC recipient.
+
+    Args:
+        recipient_info: One entry from a cached email's to/cc recipient list.
+
+    Returns:
+        tuple: (address, display_name), each stripped, either possibly empty.
+    """
+    address = recipient_info.get("address") or recipient_info.get("email") or ""
+    display_name = recipient_info.get("name") or recipient_info.get("display_name") or ""
+    return address.strip(), display_name.strip()
+
+
+def _format_recipient(address: str, display_name: str) -> str:
+    """Render a recipient for an Outlook To/CC field.
+
+    Uses "Display Name <address>" only when that is actually meaningful. Exchange
+    entries often carry the display name in both fields, and "Name <Name>" is not
+    an address Outlook can resolve.
+
+    Args:
+        address: The recipient address (may itself be a display name).
+        display_name: The recipient's display name, if known.
+
+    Returns:
+        str: The recipient string to put in the field.
+    """
+    if display_name and "@" in address and display_name != address:
+        return f"{display_name} <{address}>"
+    return address or display_name
+
+
+def merge_default_cc(
+    cc_entries: List[str],
+    is_sender: Optional[Callable[[str], bool]] = None,
+) -> List[str]:
+    """Add the configured default CC addresses to a CC list.
+
+    Args:
+        cc_entries: CC entries already on the message, either bare addresses
+            or "Display Name <address>" strings.
+        is_sender: Optional predicate identifying the person being replied to.
+            Matching defaults are skipped so a reply never CCs them back.
+
+    Returns:
+        list: cc_entries followed by the default addresses not already present.
+            Comparison is on the normalized address, so "Name <a@b.com>" and
+            "a@b.com" count as the same recipient.
+    """
+    merged = list(cc_entries)
+    defaults = email_defaults_config.DEFAULT_CC
+    if not defaults:
+        return merged
+
+    seen = {normalize_email_address(entry) for entry in merged}
+
+    for address in defaults:
+        normalized = normalize_email_address(address)
+        if normalized in seen:
+            logger.debug(f"Default CC already present, skipping: {address}")
+            continue
+        if is_sender is not None and is_sender(address):
+            logger.debug(f"Default CC matches the original sender, skipping: {address}")
+            continue
+
+        merged.append(address)
+        seen.add(normalized)
+        logger.debug(f"Added default CC: {address}")
+
+    return merged
 
 
 def reply_to_email_by_number(
@@ -130,23 +208,17 @@ def reply_to_email_by_number(
                 # Also check individual components
                 sender_variations.add(normalize_email_address(sender_name))
 
-            # Check if sender appears in original To field
-            if original_to:
-                to_emails = [addr.strip() for addr in original_to.split(";") if addr.strip()]
-                for to_email in to_emails:
-                    normalized_to = normalize_email_address(to_email)
-                    sender_variations.add(normalized_to)
-                    if normalized_to == normalized_sender_email:
-                        logger.debug(f"Found sender in original TO field: {to_email}")
-
-            # Check if sender appears in original CC field
-            if original_cc:
-                cc_emails = [addr.strip() for addr in original_cc.split(";") if addr.strip()]
-                for cc_email in cc_emails:
-                    normalized_cc = normalize_email_address(cc_email)
-                    sender_variations.add(normalized_cc)
-                    if normalized_cc == normalized_sender_email:
-                        logger.debug(f"Found sender in original CC field: {cc_email}")
+            # Note whether the sender also appears in the original To/CC fields.
+            # These addresses are deliberately NOT registered as sender variations:
+            # doing so marked every original recipient as "the sender", so ReplyAll
+            # silently dropped the entire CC list.
+            for field_name, field_value in (("TO", original_to), ("CC", original_cc)):
+                if not field_value:
+                    continue
+                for address in field_value.split(";"):
+                    address = address.strip()
+                    if address and normalize_email_address(address) == normalized_sender_email:
+                        logger.debug(f"Found sender in original {field_name} field: {address}")
 
             logger.debug(f"Sender variations to filter against: {sorted(sender_variations)}")
 
@@ -170,8 +242,9 @@ def reply_to_email_by_number(
 
                 for i, recipient_info in enumerate(cc_recipients_data):
                     if isinstance(recipient_info, dict):
-                        recipient_email = recipient_info.get("email", "").strip()
-                        recipient_display_name = recipient_info.get("display_name", "").strip()
+                        recipient_email, recipient_display_name = _read_cached_recipient(
+                            recipient_info
+                        )
                         normalized_recipient_email = normalize_email_address(recipient_email)
 
                         logger.debug(f"CC recipient {i+1}: {recipient_info}")
@@ -183,13 +256,9 @@ def reply_to_email_by_number(
 
                         if recipient_email:
                             if not is_sender_email(recipient_email):
-                                # Prefer display name with email, fallback to just email
-                                if recipient_display_name:
-                                    recipient_string = (
-                                        f"{recipient_display_name} <{recipient_email}>"
-                                    )
-                                else:
-                                    recipient_string = recipient_email
+                                recipient_string = _format_recipient(
+                                    recipient_email, recipient_display_name
+                                )
                                 cc_recipients_set.add(recipient_string)
                                 logger.debug(f"  -> ADDED to CC: {recipient_string}")
                             else:
@@ -205,10 +274,11 @@ def reply_to_email_by_number(
                 if cc_recipients_set:
                     logger.debug(f"CC recipients list: {sorted(cc_recipients_set)}")
 
-                # Set CC field with filtered CC recipients if any
-                if cc_recipients_set:
-                    logger.debug(f"Setting CC to (ReplyAll): {sorted(cc_recipients_set)}")
-                    new_mail.CC = "; ".join(sorted(cc_recipients_set))
+                # Set CC field with filtered CC recipients plus any configured defaults
+                final_cc = merge_default_cc(sorted(cc_recipients_set), is_sender_email)
+                if final_cc:
+                    logger.debug(f"Setting CC to (ReplyAll): {final_cc}")
+                    new_mail.CC = "; ".join(final_cc)
                 else:
                     # Explicitly clear CC field if no valid recipients remain
                     logger.debug("No CC recipients after filtering - clearing CC field")
@@ -217,9 +287,10 @@ def reply_to_email_by_number(
                 # Use custom recipients, but ensure original sender is not in CC
                 if to_recipients is not None:
                     new_mail.To = "; ".join(to_recipients)
+
+                filtered_cc = []
                 if cc_recipients is not None:
                     # Filter out the original sender from CC recipients
-                    filtered_cc = []
                     for recipient in cc_recipients:
                         # Use comprehensive sender filtering
                         if not is_sender_email(recipient):
@@ -228,14 +299,15 @@ def reply_to_email_by_number(
                         else:
                             logger.info(f"Filtered out original sender from CC: {recipient}")
 
-                    # Explicitly set CC field
-                    if filtered_cc:
-                        logger.debug(f"Setting CC to: {filtered_cc}")
-                        new_mail.CC = "; ".join(filtered_cc)
-                    else:
-                        # Explicitly clear CC field if no valid recipients remain
-                        logger.debug("No CC recipients after filtering - clearing CC field")
-                        new_mail.CC = ""
+                # Configured defaults apply even when the caller named no CC at all.
+                final_cc = merge_default_cc(filtered_cc, is_sender_email)
+                if final_cc:
+                    logger.debug(f"Setting CC to: {final_cc}")
+                    new_mail.CC = "; ".join(final_cc)
+                else:
+                    # Explicitly clear CC field if no valid recipients remain
+                    logger.debug("No CC recipients after filtering - clearing CC field")
+                    new_mail.CC = ""
 
             # Set subject with RE: prefix
             subject = safe_encode_text(getattr(email, "Subject", "No Subject"), "subject")
@@ -385,8 +457,9 @@ def compose_email(
             mail.To = "; ".join(encoded_to)
             mail.Subject = subject_safe
 
-            if cc_recipients:
-                mail.CC = "; ".join(encoded_cc)
+            final_cc = merge_default_cc(encoded_cc)
+            if final_cc:
+                mail.CC = "; ".join(final_cc)
 
             try:
                 if html:
