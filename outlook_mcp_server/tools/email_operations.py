@@ -7,12 +7,16 @@ from ..backend.validation import ValidationError
 
 
 def reply_to_email_by_number_tool(
-    email_number: int, 
-    reply_text: str, 
-    to_recipients: Union[str, List[str], None] = None, 
-    cc_recipients: Union[str, List[str], None] = None
+    email_number: int,
+    reply_text: str,
+    to_recipients: Union[str, List[str], None] = None,
+    cc_recipients: Union[str, List[str], None] = None,
+    attachments: Union[str, List[str], None] = None
 ) -> Dict[str, Any]:
-    """Reply to an email with custom recipients if provided
+    """Draft a reply to an email, optionally with file attachments.
+
+    This does NOT send anything. The reply is saved to the Drafts folder for the
+    user to review and send themselves in Outlook.
 
     Args:
         email_number: Email's position in the last listing
@@ -21,6 +25,10 @@ def reply_to_email_by_number_tool(
                       Examples: "user@company.com" OR ["user@company.com", "boss@company.com"]
         cc_recipients: Either a single email string OR a list of email strings (None preserves original recipients)
                       Examples: "user@company.com" OR ["user@company.com", "boss@company.com"]
+        attachments: Local file path, or list of paths, to attach to the draft
+                    Examples: "C:/Users/me/report.xlsx" OR ["C:/a.pdf", "C:/b.docx"]
+                    Paths must exist on this machine; ~ and environment variables are expanded.
+                    Up to 20 files and 25 MB total. Nothing is attached to the reply by default.
 
     Behavior:
         - When both to_recipients and cc_recipients are None:
@@ -29,6 +37,8 @@ def reply_to_email_by_number_tool(
           * Uses Reply() with specified recipients
           * Any None parameters will result in empty recipient fields
         - Single email strings and lists of email strings are both accepted
+        - Attachment paths are validated before the draft is created; if a file
+          cannot be attached, no draft is saved at all
 
     Returns:
         dict: Response containing confirmation message
@@ -41,22 +51,37 @@ def reply_to_email_by_number_tool(
         raise ValidationError("Email number must be a positive integer")
     if not reply_text or not isinstance(reply_text, str):
         raise ValidationError("Reply text must be a non-empty string")
-    
+
     try:
-        result = reply_to_email_by_number(email_number, reply_text, to_recipients, cc_recipients)
+        result = reply_to_email_by_number(
+            email_number, reply_text, to_recipients, cc_recipients, attachments
+        )
         return {"type": "text", "text": result}
     except Exception as e:
         return {"type": "text", "text": f"Error replying to email: {str(e)}"}
 
 
-def compose_email_tool(recipient_email: str, subject: str, body: str, cc_email: Optional[str] = None) -> Dict[str, Any]:
-    """Compose and send a new email
+def compose_email_tool(
+    recipient_email: str,
+    subject: str,
+    body: str,
+    cc_email: Optional[str] = None,
+    attachments: Union[str, List[str], None] = None
+) -> Dict[str, Any]:
+    """Draft a new email, optionally with file attachments.
+
+    This does NOT send anything. The message is saved to the Drafts folder for the
+    user to review and send themselves in Outlook.
 
     Args:
         recipient_email: Email address(es) of the recipient(s) - can be single email or semicolon-separated list
         subject: Subject line of the email
         body: Main content of the email
         cc_email: Optional CC email address(es) - can be single email or semicolon-separated list
+        attachments: Local file path, or list of paths, to attach to the draft
+                    Examples: "C:/Users/me/report.xlsx" OR ["C:/a.pdf", "C:/b.docx"]
+                    Paths must exist on this machine; ~ and environment variables are expanded.
+                    Up to 20 files and 25 MB total.
 
     Returns:
         dict: Response containing confirmation message
@@ -64,6 +89,10 @@ def compose_email_tool(recipient_email: str, subject: str, body: str, cc_email: 
             "type": "text",
             "text": "Confirmation message here"
         }
+
+    Note:
+        Attachment paths are validated before the draft is created; if a file
+        cannot be attached, no draft is saved at all.
     """
     if not recipient_email or not isinstance(recipient_email, str):
         raise ValidationError("Recipient email must be a non-empty string")
@@ -71,15 +100,17 @@ def compose_email_tool(recipient_email: str, subject: str, body: str, cc_email: 
         raise ValidationError("Subject must be a non-empty string")
     if not body or not isinstance(body, str):
         raise ValidationError("Body must be a non-empty string")
-    
+
     try:
         # Parse semicolon-separated email addresses into lists
         to_recipients = [email.strip() for email in recipient_email.split(';') if email.strip()]
         cc_recipients = None
         if cc_email:
             cc_recipients = [email.strip() for email in cc_email.split(';') if email.strip()]
-        
-        result = compose_email(to_recipients, subject, body, cc_recipients)
+
+        result = compose_email(
+            to_recipients, subject, body, cc_recipients, attachments=attachments
+        )
         return {"type": "text", "text": result}
     except Exception as e:
         return {"type": "text", "text": f"Error composing email: {str(e)}"}
