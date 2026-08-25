@@ -291,6 +291,29 @@ are expanded). Limits are 20 files and 25 MB in total, configurable via
 `AttachmentConfig` in `backend/config.py`. If any file cannot be attached, no
 draft is saved at all - you never get a draft that is silently missing a file.
 
+### Automatic CC
+
+Set `OUTLOOK_MCP_DEFAULT_CC` to CC someone on every draft this server creates -
+one or more addresses separated by `;` or `,`:
+
+```json
+{
+  "mcpServers": {
+    "outlook": {
+      "command": "...",
+      "args": ["-m", "outlook_mcp_server"],
+      "env": { "OUTLOOK_MCP_DEFAULT_CC": "boss@example.com" }
+    }
+  }
+}
+```
+
+It is read from the environment, not committed to config, so a mailbox-specific
+address stays out of version control. The addresses are added on top of whatever
+CC list a reply already has, skipping anyone already there and never CCing the
+person being replied to. Because everything lands in Drafts, you see the CC field
+and can remove it before sending.
+
 ### Folder Operations
 - `get_folder_list_tool()` - **Always use first** to see available folders
 - `create_folder_tool("folder name")` - Create new folder

@@ -194,6 +194,35 @@ class EmailMetadataConfig:
     FLAG_STATUS_COMPLETE = 2
 
 
+class EmailDefaultsConfig:
+    """Defaults applied to outgoing drafts.
+
+    DEFAULT_CC is read from the environment rather than stored here, so a
+    mailbox-specific address never lands in version control. Set
+    OUTLOOK_MCP_DEFAULT_CC to one or more addresses separated by ';' or ','
+    (in the MCP server's env block, for example). Leave it unset to disable.
+
+    The addresses are added to drafts, never to sent mail: they show up in the
+    CC field in Drafts, where you can see and remove them before sending.
+    """
+
+    DEFAULT_CC_ENV_VAR = "OUTLOOK_MCP_DEFAULT_CC"
+
+    @property
+    def DEFAULT_CC(self) -> list:
+        """Parse the configured default CC addresses, ignoring empty entries."""
+        raw = os.getenv(self.DEFAULT_CC_ENV_VAR, "")
+        if not raw.strip():
+            return []
+
+        addresses = []
+        for chunk in raw.replace(",", ";").split(";"):
+            candidate = chunk.strip()
+            if candidate:
+                addresses.append(candidate)
+        return addresses
+
+
 class ValidationConfig:
     """Validation configuration.
     
@@ -218,4 +247,5 @@ outlook_config = OutlookConfig()
 email_format_config = EmailFormatConfig()
 attachment_config = AttachmentConfig()
 email_metadata_config = EmailMetadataConfig()
+email_defaults_config = EmailDefaultsConfig()
 validation_config = ValidationConfig()
